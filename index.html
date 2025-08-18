@@ -11,7 +11,7 @@
 </head>
 <body>
   <h1>Palestinian Casualties Dashboard</h1>
-  <p>This simple dashboard shows the cumulative number of Palestinians killed over time. Data are loaded from the local JSON file (<code>casualties_daily.json</code>) that accompanies this page.</p>
+  <p>The graph displays the number of Palestinians killed in Gaza since Oct 7, 2023. Casualty statistics are updated daily. Data source: <a href="https://data.techforpalestine.org/api/v2/casualties_daily.json" target="_blank" rel="noopener">Tech For Palestine – Daily Casualties (API)</a>.</p>
   <canvas id="cumulativeChart"></canvas>
   <script>
     fetch('casualties_daily.json')
@@ -19,6 +19,13 @@
       .then(data => {
         const dates = data.map(item => item.report_date);
         const cumulativeDeaths = data.map(item => item.killed_cum);
+        const dailyDeaths = data.map((item, idx) => {
+          if (typeof item.killed === 'number') return item.killed;
+          if (idx === 0) return item.killed_cum || 0;
+          const prev = data[idx - 1].killed_cum ?? 0;
+          const curr = item.killed_cum ?? 0;
+          return Math.max(0, curr - prev);
+        });
         const ctx = document.getElementById('cumulativeChart').getContext('2d');
         new Chart(ctx, {
           type: 'line',
@@ -29,15 +36,26 @@
               data: cumulativeDeaths,
               borderWidth: 2,
               fill: false,
-              tension: 0.1
-            }]
+              tension: 0.1,
+              pointRadius: 2,
+              pointHoverRadius: 3
+            },
+            {
+              type: 'bar',
+              label: 'Daily deaths',
+              data: dailyDeaths,
+              borderWidth: 0,
+              order: 1,
+              yAxisID: 'y'
+            }
+            ]
           },
           options: {
             responsive: true,
             interaction: { mode: 'index', intersect: false },
             scales: {
               x: { title: { display: true, text: 'Report date' }, ticks: { maxTicksLimit: 10, autoSkip: true } },
-              y: { title: { display: true, text: 'Cumulative deaths' } }
+              y: { title: { display: true, text: 'Cumulative deaths' }, grace: '5%' }
             }
           }
         });
