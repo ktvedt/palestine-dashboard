@@ -4,14 +4,28 @@
   <meta charset="utf-8">
   <title>Palestinian Casualties Dashboard</title>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@3.7.0/dist/chart.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js"></script>
+  <script>
+    (function(){
+      if (window.ChartZoom && window.Chart && typeof window.Chart.register === 'function') {
+        window.Chart.register(window.ChartZoom);
+      } else {
+        console.warn('Chart.js zoom plugin not found or Chart not ready');
+      }
+    })();
+  </script>
   <style>
     body { font-family: Arial, sans-serif; margin: 2rem; }
-    canvas { max-width: 100%; height: 400px; }
+    canvas { max-width: 100%; height: 400px; touch-action: none; }
   </style>
 </head>
 <body>
-  <h1>Palestinian Casualties Dashboard</h1>
-  <p>The graph displays the number of Palestinians killed in Gaza since Oct 7, 2023. Casualty statistics are updated daily. Data source: <a href="https://data.techforpalestine.org/api/v2/casualties_daily.json" target="_blank" rel="noopener">Tech For Palestine – Daily Casualties (API)</a>.</p>
+  <h1>Palestinian death toll since Oct 2023</h1>
+  <p>The graph displays the number of Palestinians killed in Gaza since Oct 7, 2023. <br> <br>
+    <i>Casualty statistics are updated daily. Note that daily casualty numbers are approximate due to latency in reporting deaths.</i> <br> 
+    Data source: <a href="https://data.techforpalestine.org/api/v2/casualties_daily.json" target="_blank" rel="noopener">Tech For Palestine – Daily Casualties (API)</a>.</p>
+  <p>Navigate in the plot by zooming and dragging. Double-click to reset zoom.</p>
+    <button id="resetZoom" style="margin-bottom:0.5rem">Reset zoom</button>
   <canvas id="cumulativeChart"></canvas>
   <script>
     fetch('casualties_daily.json')
@@ -19,15 +33,32 @@
       .then(data => {
         const dates = data.map(item => item.report_date);
         const cumulativeDeaths = data.map(item => item.killed_cum);
+        const latestCum = cumulativeDeaths[cumulativeDeaths.length - 1] || 0;
+        const lastKnownCum = (arr, i) => {
+          for (let j = i; j >= 0; j--) {
+            const v = arr[j]?.killed_cum;
+            if (typeof v === 'number' && isFinite(v)) return v;
+          }
+          return 0;
+        };
         const dailyDeaths = data.map((item, idx) => {
-          if (typeof item.killed === 'number') return item.killed;
-          if (idx === 0) return item.killed_cum || 0;
-          const prev = data[idx - 1].killed_cum ?? 0;
-          const curr = item.killed_cum ?? 0;
+          if (typeof item.killed === 'number' && isFinite(item.killed)) return item.killed;
+          const curr = (typeof item.killed_cum === 'number' && isFinite(item.killed_cum)) ? item.killed_cum : null;
+          if (curr === null) return 0;
+          const prev = lastKnownCum(data, idx - 1);
           return Math.max(0, curr - prev);
         });
+        const maxDaily = dailyDeaths.reduce((m, v) => Math.max(m, v || 0), 0);
+        const parseDate = (s) => new Date(s + 'T00:00:00Z');
+        const lastDate = parseDate(dates[dates.length - 1]);
+        const threeMonthsAgo = new Date(lastDate);
+        threeMonthsAgo.setMonth(threeMonthsAgo.getMonth() - 3);
+        let defaultMinIndex = 0;
+        for (let i = dates.length - 1; i >= 0; i--) {
+          if (parseDate(dates[i]) < threeMonthsAgo) { defaultMinIndex = i + 1; break; }
+        }
         const ctx = document.getElementById('cumulativeChart').getContext('2d');
-        new Chart(ctx, {
+        const chart = new Chart(ctx, {
           type: 'line',
           data: {
             labels: dates,
@@ -38,7 +69,8 @@
               fill: false,
               tension: 0.1,
               pointRadius: 2,
-              pointHoverRadius: 3
+              pointHoverRadius: 3,
+              yAxisID: 'y',
             },
             {
               type: 'bar',
@@ -46,7 +78,7 @@
               data: dailyDeaths,
               borderWidth: 0,
               order: 1,
-              yAxisID: 'y'
+              yAxisID: 'y1'
             }
             ]
           },
@@ -54,11 +86,59 @@
             responsive: true,
             interaction: { mode: 'index', intersect: false },
             scales: {
-              x: { title: { display: true, text: 'Report date' }, ticks: { maxTicksLimit: 10, autoSkip: true } },
-              y: { title: { display: true, text: 'Cumulative deaths' }, grace: '5%' }
+              x: {
+                title: { display: true, text: 'Report date' },
+                ticks: { maxTicksLimit: 10, autoSkip: true },
+                min: defaultMinIndex
+              },
+              y: {
+                title: { display: true, text: 'Cumulative deaths' },
+                min: 0,
+                max: latestCum
+              },
+              y1: {
+                position: 'right',
+                title: { display: true, text: 'Daily deaths' },
+                min: 0,
+                beginAtZero: true,
+                suggestedMax: Math.max(500, Math.ceil(maxDaily * 1.2 / 100) * 100),
+                grid: { drawOnChartArea: false }
+              }
+            },
+            plugins: {
+              zoom: {
+                limits: {
+                  y: { min: 0, max: latestCum },
+                  y1: { min: 0, max: Math.max(1000, Math.ceil(maxDaily * 5 / 100) * 100) }
+                },
+                pan: { enabled: true, mode: 'x', modifierKey: null },
+                zoom: {
+                  wheel: { enabled: true },
+                  pinch: { enabled: true },
+                  drag: { enabled: true },
+                  mode: 'x' // keep wheel/pinch zoom constrained to X to avoid exploding Y1; drag-zoom is X as well
+                }
+              },
+              tooltip: {
+                callbacks: {
+                  label: function(context) {
+                    return `${context.dataset.label}: ${context.parsed.y.toLocaleString()}`;
+                  }
+                }
+              }
             }
           }
         });
+        // Reset zoom via button
+        const resetBtn = document.getElementById('resetZoom');
+        if (resetBtn) {
+          resetBtn.addEventListener('click', () => chart.resetZoom());
+        }
+        // Reset zoom on double-click on the canvas
+        const canvasEl = document.getElementById('cumulativeChart');
+        if (canvasEl) {
+          canvasEl.addEventListener('dblclick', () => chart.resetZoom());
+        }
       })
       .catch(error => console.error('Error loading data:', error));
   </script>
