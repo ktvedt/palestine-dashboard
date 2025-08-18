@@ -1,0 +1,38 @@
+name: Update casualty data
+
+on:
+  schedule:
+    # Run daily at 06:00 UTC (08:00 Oslo time)
+    - cron: "0 6 * * *"
+  workflow_dispatch: {}
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.x'
+
+      - name: Install dependencies
+        run: pip install --no-cache-dir requests
+
+      - name: Download latest data
+        run: python update_data.py
+
+      - name: Commit and push changes
+        run: |
+          if [[ `git status --porcelain` ]]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add casualties_daily.json
+            git commit -m "chore: update casualties data"
+            git push origin HEAD
+          else
+            echo "No changes to commit"
