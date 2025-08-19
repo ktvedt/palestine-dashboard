@@ -24,7 +24,7 @@ jobs:
         run: pip install --no-cache-dir requests
 
       - name: Download latest data
-        run: python update_data.py
+        run: python get_data.py
 
       - name: Commit and push changes
         run: |
