@@ -17,36 +17,64 @@
   <style>
     body { font-family: Arial, sans-serif; margin: 2rem; }
     canvas { max-width: 100%; height: 400px; touch-action: none; }
+    .controls { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 0.75rem; }
   </style>
 </head>
 <body>
   <h1>Palestinian death toll since Oct 2023</h1>
   <p>The graph displays the number of Palestinians killed in Gaza since Oct 7, 2023. <br> <br>
-    <i>Casualty statistics are updated daily. Note that daily casualty numbers are approximate due to latency in reporting deaths.</i> <br> 
+    <i>Casualty statistics are updated daily, but the death toll statistics for any single day are impaired by uncertainty and reporting latency. This can create gaps followed by sharp spikes in reported deaths among press, medical personnel and children.</i> <br> 
     Data source: <a href="https://data.techforpalestine.org/api/v2/casualties_daily.json" target="_blank" rel="noopener">Tech For Palestine – Daily Casualties (API)</a>.</p>
   <p>Navigate in the plot by scrolling, dragging or selecting an area. Double-click to reset zoom.</p>
-    <button id="resetZoom" style="margin-bottom:0.5rem">Reset zoom</button>
+  <div class="controls">
+    <button id="toggleBreakdown" type="button">Hide groups</button>
+    <button id="resetZoom" type="button">Reset zoom</button>
+  </div>
   <canvas id="cumulativeChart"></canvas>
   <script>
     fetch('casualties_daily.json')
       .then(response => response.json())
       .then(data => {
         const dates = data.map(item => item.report_date);
-        const cumulativeDeaths = data.map(item => item.killed_cum);
-        const latestCum = cumulativeDeaths[cumulativeDeaths.length - 1] || 0;
-        const lastKnownCum = (arr, i) => {
+        const isValid = (v) => typeof v === 'number' && isFinite(v);
+        const getTotalCum = (item) => {
+          if (isValid(item.ext_killed_cum)) return item.ext_killed_cum;
+          if (isValid(item.killed_cum)) return item.killed_cum;
+          return null;
+        };
+        const lastKnown = (arr, i, getter) => {
           for (let j = i; j >= 0; j--) {
-            const v = arr[j]?.killed_cum;
-            if (typeof v === 'number' && isFinite(v)) return v;
+            const v = getter(arr[j]);
+            if (isValid(v)) return v;
           }
           return 0;
         };
+        const cumulativeDeaths = data.map(item => {
+          const value = getTotalCum(item);
+          return value === null ? 0 : value;
+        });
+        const latestCum = cumulativeDeaths[cumulativeDeaths.length - 1] || 0;
         const dailyDeaths = data.map((item, idx) => {
-          if (typeof item.killed === 'number' && isFinite(item.killed)) return item.killed;
-          const curr = (typeof item.killed_cum === 'number' && isFinite(item.killed_cum)) ? item.killed_cum : null;
+          if (isValid(item.ext_killed)) return item.ext_killed;
+          if (isValid(item.killed)) return item.killed;
+          const curr = getTotalCum(item);
           if (curr === null) return 0;
-          const prev = lastKnownCum(data, idx - 1);
+          const prev = lastKnown(data, idx - 1, getTotalCum);
           return Math.max(0, curr - prev);
+        });
+        const dailyFromCumulative = (field) => data.map((item, idx) => {
+          const curr = item[field];
+          if (!isValid(curr)) return 0;
+          const prev = lastKnown(data, idx - 1, row => row[field]);
+          return Math.max(0, curr - prev);
+        });
+        const dailyChildren = dailyFromCumulative('ext_killed_children_cum');
+        const dailyWomen = dailyFromCumulative('ext_killed_women_cum');
+        const dailyMedics = dailyFromCumulative('ext_med_killed_cum');
+        const dailyPress = dailyFromCumulative('ext_press_killed_cum');
+        const dailyRest = dailyDeaths.map((total, idx) => {
+          const subtotal = dailyChildren[idx] + dailyWomen[idx] + dailyMedics[idx] + dailyPress[idx];
+          return Math.max(0, total - subtotal);
         });
         const maxDaily = dailyDeaths.reduce((m, v) => Math.max(m, v || 0), 0);
         const parseDate = (s) => new Date(s + 'T00:00:00Z');
@@ -58,29 +86,81 @@
           if (parseDate(dates[i]) < threeMonthsAgo) { defaultMinIndex = i + 1; break; }
         }
         const ctx = document.getElementById('cumulativeChart').getContext('2d');
+        const lineDataset = {
+          label: 'Cumulative deaths',
+          data: cumulativeDeaths,
+          borderWidth: 2,
+          fill: false,
+          tension: 0.1,
+          pointRadius: 2,
+          pointHoverRadius: 3,
+          yAxisID: 'y'
+        };
+        const dailyDataset = {
+          type: 'bar',
+          label: 'Daily deaths',
+          data: dailyDeaths,
+          borderWidth: 0,
+          order: 1,
+          yAxisID: 'y1'
+        };
+        const breakdownDatasets = [
+          {
+            type: 'bar',
+            label: 'Children',
+            data: dailyChildren,
+            backgroundColor: '#4C78A8',
+            borderWidth: 0,
+            order: 1,
+            stack: 'daily-breakdown',
+            yAxisID: 'y1'
+          },
+          {
+            type: 'bar',
+            label: 'Women',
+            data: dailyWomen,
+            backgroundColor: '#F58518',
+            borderWidth: 0,
+            order: 1,
+            stack: 'daily-breakdown',
+            yAxisID: 'y1'
+          },
+          {
+            type: 'bar',
+            label: 'Medics',
+            data: dailyMedics,
+            backgroundColor: '#54A24B',
+            borderWidth: 0,
+            order: 1,
+            stack: 'daily-breakdown',
+            yAxisID: 'y1'
+          },
+          {
+            type: 'bar',
+            label: 'Press',
+            data: dailyPress,
+            backgroundColor: '#E45756',
+            borderWidth: 0,
+            order: 1,
+            stack: 'daily-breakdown',
+            yAxisID: 'y1'
+          },
+          {
+            type: 'bar',
+            label: 'Rest',
+            data: dailyRest,
+            backgroundColor: '#9D9FA2',
+            borderWidth: 0,
+            order: 1,
+            stack: 'daily-breakdown',
+            yAxisID: 'y1'
+          }
+        ];
         const chart = new Chart(ctx, {
           type: 'line',
           data: {
             labels: dates,
-            datasets: [{
-              label: 'Cumulative deaths',
-              data: cumulativeDeaths,
-              borderWidth: 2,
-              fill: false,
-              tension: 0.1,
-              pointRadius: 2,
-              pointHoverRadius: 3,
-              yAxisID: 'y',
-            },
-            {
-              type: 'bar',
-              label: 'Daily deaths',
-              data: dailyDeaths,
-              borderWidth: 0,
-              order: 1,
-              yAxisID: 'y1'
-            }
-            ]
+            datasets: [lineDataset, dailyDataset]
           },
           options: {
             responsive: true,
@@ -89,7 +169,8 @@
               x: {
                 title: { display: true, text: 'Report date' },
                 ticks: { maxTicksLimit: 10, autoSkip: true },
-                min: defaultMinIndex
+                min: defaultMinIndex,
+                stacked: false
               },
               y: {
                 title: { display: true, text: 'Cumulative deaths' },
@@ -102,7 +183,8 @@
                 min: 0,
                 beginAtZero: true,
                 suggestedMax: Math.max(500, Math.ceil(maxDaily * 1.2 / 100) * 100),
-                grid: { drawOnChartArea: false }
+                grid: { drawOnChartArea: false },
+                stacked: false
               }
             },
             plugins: {
@@ -129,6 +211,21 @@
             }
           }
         });
+        const toggleBtn = document.getElementById('toggleBreakdown');
+        const applyBreakdown = (enabled) => {
+          chart.data.datasets = [lineDataset].concat(enabled ? breakdownDatasets : [dailyDataset]);
+          chart.options.scales.x.stacked = enabled;
+          chart.options.scales.y1.stacked = enabled;
+          chart.update();
+          if (toggleBtn) {
+            toggleBtn.textContent = enabled ? 'Hide groups' : 'Show groups';
+            toggleBtn.setAttribute('aria-pressed', String(enabled));
+          }
+        };
+        if (toggleBtn) {
+          toggleBtn.addEventListener('click', () => applyBreakdown(toggleBtn.getAttribute('aria-pressed') !== 'true'));
+          applyBreakdown(true);
+        }
         // Reset zoom via button
         const resetBtn = document.getElementById('resetZoom');
         if (resetBtn) {
